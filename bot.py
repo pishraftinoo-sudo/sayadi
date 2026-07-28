@@ -1,19 +1,13 @@
+import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
+
 import requests
 from bs4 import BeautifulSoup
 
-WORDPRESS_API_URL = os.getenv(
-    "WORDPRESS_API_URL",
-    "https://www.sayadicatalyst.com/smart-sync.php"
-)
-WORDPRESS_SECURITY_KEY = os.getenv(
-    "WORDPRESS_SECURITY_KEY",
-    "sayadi-smart-ppm-2026"
-)
-
-METALS = {
+KITCO_URLS = {
     "platinum": "https://www.kitco.com/charts/platinum",
     "palladium": "https://www.kitco.com/charts/palladium",
     "rhodium": "https://www.kitco.com/charts/rhodium",
@@ -26,36 +20,69 @@ HEADERS = {
         "Chrome/120.0.0.0 Safari/537.36"
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
 }
+
+OUTPUT_FILE = os.getenv("OUTPUT_FILE", "prices.json").strip()
+
 
 def extract_first_price(text):
     if not text:
         return None
+
     match = re.search(r"(\d[\d,]*\.?\d*)", text)
     if not match:
         return None
+
     try:
         return float(match.group(1).replace(",", ""))
     except ValueError:
         return None
 
-def find_price_element(soup, metal):
-    candidates = [
+
+def find_price_node(soup, metal):
+    candidate_ids = [
         f"{metal}-bid",
         f"{metal}_bid",
         f"{metal}-price",
         f"{metal}_price",
+        f"{metal}Bid",
+        f"{metal}Price",
     ]
 
-    for element_id in candidates:
+    for element_id in candidate_ids:
         node = soup.find(id=element_id)
-        if node and node.get_text(strip=True):
+        if node and node.get_text(" ", strip=True):
             return node
 
-    for node in soup.find_all(["span", "div", "td"]):
+    candidate_selectors = [
+        f".{metal}-bid",
+        f".{metal}_bid",
+        f".{metal}-price",
+        f".{metal}_price",
+        f"[data-metal='{metal}']",
+        f"[data-symbol='{metal}']",
+    ]
+
+    for selector in candidate_selectors:
+        try:
+            node = soup.select_one(selector)
+            if node and node.get_text(" ", strip=True):
+                return node
+        except Exception:
+            pass
+
+    for node in soup.find_all(["span", "div", "td", "li"]):
         classes = " ".join(node.get("class", [])) if node.get("class") else ""
-        if classes and ("price" in classes.lower() or "bid" in classes.lower()):
-            if any(ch.isdigit() for ch in node.get_text(" ", strip=True)):
+        text = node.get_text(" ", strip=True)
+
+        if not text:
+            continue
+
+        if classes and any(k in classes.lower() for k in ["price", "bid", "quote"]):
+            if extract_first_price(text) is not None:
                 return node
 
     for node in soup.find_all(["span", "div", "td", "li"]):
@@ -65,78 +92,74 @@ def find_price_element(soup, metal):
 
     return None
 
+
+def fetch_metal_price(metal, url):
+    print(f"Fetching {metal} from {url}...")
+    response = requests.get(url, headers=HEADERS, timeout=25)
+    response.raise_for_status()
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    node = find_price_node(soup, metal)
+
+    if node is None:
+        raise RuntimeError(f"Could not locate price node for {metal}")
+
+    raw_text = node.get_text(" ", strip=True)
+    price = extract_first_price(raw_text)
+
+    if price is None:
+        fallback_text = soup.get_text(" ", strip=True)
+        price = extract_first_price(fallback_text)
+
+    if price is None:
+        raise RuntimeError(f"Could not parse price for {metal}")
+
+    print(f"Found {metal}: {price}")
+    return price
+
+
 def get_prices_from_kitco():
     prices = {}
 
-    for metal, url in METALS.items():
+    for metal, url in KITCO_URLS.items():
         try:
-            print(f"Fetching {metal} from {url}...")
-            response = requests.get(url, headers=HEADERS, timeout=20)
-
-            if response.status_code != 200:
-                print(f"Failed to load {metal}. Status code: {response.status_code}")
-                continue
-
-            soup = BeautifulSoup(response.text, "html.parser")
-            price_node = find_price_element(soup, metal)
-
-            if not price_node:
-                print(f"Could not find HTML element for {metal}")
-                continue
-
-            raw_text = price_node.get_text(" ", strip=True)
-            price_val = extract_first_price(raw_text)
-
-            if price_val is None:
-                print(f"Could not parse price for {metal} from text: {raw_text}")
-                continue
-
-            prices[metal] = price_val
-            print(f"Successfully found {metal}: {price_val}")
-
-        except Exception as e:
-            print(f"Exception occurred while fetching {metal}: {e}")
+            prices[metal] = fetch_metal_price(metal, url)
+        except Exception as exc:
+            print(f"Failed to fetch {metal}: {exc}")
 
     return prices
 
-def send_to_wordpress(prices):
+
+def write_json_file(prices):
     payload = {
-        "action": "smart_ppm_update_prices",
-        "security_key": WORDPRESS_SECURITY_KEY,
         "source": "kitco",
-        "platinum": prices.get("platinum", 0),
-        "palladium": prices.get("palladium", 0),
-        "rhodium": prices.get("rhodium", 0),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "prices": prices,
     }
 
-    try:
-        print("Sending data to WordPress...")
-        response = requests.post(WORDPRESS_API_URL, data=payload, timeout=20)
+    output_dir = os.path.dirname(OUTPUT_FILE)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
 
-        print(f"WordPress Response Code: {response.status_code}")
-        print(f"WordPress Response Text: {response.text}")
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
 
-        return response.status_code == 200
+    print(f"Saved JSON to {OUTPUT_FILE}")
 
-    except Exception as e:
-        print(f"Error sending data to WordPress: {e}")
-        return False
 
 def main():
     print("Starting price extraction process...")
 
-    extracted_prices = get_prices_from_kitco()
-    print(f"Final extracted prices: {extracted_prices}")
+    prices = get_prices_from_kitco()
+    print(f"Final extracted prices: {prices}")
 
-    if not extracted_prices:
-        print("Error: No price data could be extracted from any source.")
+    if not prices:
+        print("Error: No price data could be extracted.")
         sys.exit(1)
 
-    success = send_to_wordpress(extracted_prices)
-    if not success:
-        sys.exit(1)
-
+    write_json_file(prices)
     print("Done.")
+
 
 if __name__ == "__main__":
     main()
