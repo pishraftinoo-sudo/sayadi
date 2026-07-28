@@ -156,11 +156,15 @@ def write_local_json(payload):
 
 
 def upload_json_to_github(payload):
+    # پاک‌سازی اسلش احتمالی از ابتدای مسیر
+    path_clean = GITHUB_PATH.lstrip('/') 
+    
     if not GITHUB_TOKEN or not GITHUB_REPO:
         print("GitHub upload skipped: GITHUB_TOKEN or GITHUB_REPO is not set.")
         return False
 
-    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_PATH}"
+    # استفاده از path_clean به جای GITHUB_PATH
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{path_clean}"
 
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
