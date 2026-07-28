@@ -1,0 +1,31 @@
+name: Auto Price Sync
+
+on:
+  schedule:
+    # این دستور یعنی اسکریپت هر ۱ ساعت یک‌بار به طور خودکار اجرا شود
+    - cron: '0 * * * *'
+  # این خط به شما اجازه می‌دهد که هر وقت خواستید، دستی هم دکمه اجرا را بزنید
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      # ۱. دانلود آخرین نسخه کدهای شما در سرور گیت‌هاب
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      # ۲. نصب محیط پایتون روی سرور گیت‌هاب
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      # ۳. نصب کتابخانه‌های مورد نیاز پایتون (مثل BeautifulSoup و requests)
+      - name: Install Dependencies
+        run: |
+          pip install requests beautifulsoup4
+
+      # ۴. اجرای اسکریپت اصلی
+      - name: Run Script
+        run: python bot.py
