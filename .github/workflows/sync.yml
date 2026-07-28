@@ -10,16 +10,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        # ارتقا به نسخه 4.2.2 یا بالاتر که با Node 24 سازگار است
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        uses: actions/checkout@v4.2.2
 
       - name: Set up Python
-        # استفاده از نسخه v5.3.0 یا بالاتر
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0
         with:
-          python-version: '3.11' # استفاده از نسخه جدیدتر پایتون برای پایداری بیشتر
+          python-version: '3.11'
 
       - name: Install Dependencies
         run: |
