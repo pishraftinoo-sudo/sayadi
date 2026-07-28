@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 
 WORDPRESS_API_URL = os.getenv(
     "WORDPRESS_API_URL",
-    "https://www.sayadicatalyst.com/wp-admin/admin-ajax.php"
+    "https://www.sayadicatalyst.com/smart-sync.php"
 )
 WORDPRESS_SECURITY_KEY = os.getenv(
     "WORDPRESS_SECURITY_KEY",
