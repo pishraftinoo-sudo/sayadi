@@ -1,111 +1,165 @@
+import os
+import re
+import sys
 import requests
 from bs4 import BeautifulSoup
-import sys
-import re
 
-WORDPRESS_API_URL = "https://emdadkhodro-tak.com/wp-json/smart-ppm/v1/update-prices"
+WORDPRESS_API_URL = os.getenv(
+    "WORDPRESS_API_URL",
+    "https://www.sayadicatalyst.com/wp-json/smart-ppm/v1/update-prices"
+)
+WORDPRESS_SECURITY_KEY = os.getenv(
+    "WORDPRESS_SECURITY_KEY",
+    "sayadi-smart-ppm-2026"
+)
 
-def clean_price(price_str):
-    """پاکسازی متن و استخراج اولین عدد اعشاری معتبر به عنوان قیمت"""
-    if not price_str:
+METALS = {
+    "platinum": "https://www.kitco.com/charts/platinum",
+    "palladium": "https://www.kitco.com/charts/palladium",
+    "rhodium": "https://www.kitco.com/charts/rhodium",
+}
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+}
+
+
+def extract_first_price(text):
+    """
+    Extract the first numeric value from a text like:
+    '1,602.00-15.00 (-0.93%)' -> 1602.0
+    """
+    if not text:
         return None
+
+    match = re.search(r"(\d[\d,]*\.?\d*)", text)
+    if not match:
+        return None
+
+    value = match.group(1).replace(",", "")
     try:
-        # حذف فاصله‌های خالی ابتدا و انتها
-        text = price_str.strip()
-        
-        # با استفاده از Regex اولین عدد (که می‌تواند شامل کاما و ممیز باشد) را جدا می‌کنیم
-        # این الگو اعدادی مثل 1,601.00 یا 7,925.00 را از ابتدای متن استخراج می‌کند
-        match = re.search(r'^([\d,]+\.?\d*)', text)
-        if match:
-            clean_str = match.group(1).replace(',', '')
-            return float(clean_str)
+        return float(value)
+    except ValueError:
         return None
-    except Exception as e:
-        print(f"Error parsing regex on text '{price_str}': {e}")
-        return None
+
+
+def find_price_element(soup, metal):
+    """
+    Try multiple strategies to locate the price node on Kitco.
+    """
+    # Strategy 1: known IDs
+    candidates = [
+        f"{metal}-bid",
+        f"{metal}_bid",
+        f"{metal}-price",
+        f"{metal}_price",
+    ]
+
+    for element_id in candidates:
+        node = soup.find(id=element_id)
+        if node and node.get_text(strip=True):
+            return node
+
+    # Strategy 2: classes containing price/bid
+    for node in soup.find_all(["span", "div", "td"]):
+        classes = " ".join(node.get("class", [])) if node.get("class") else ""
+        if classes and ("price" in classes.lower() or "bid" in classes.lower()):
+            if any(ch.isdigit() for ch in node.get_text(" ", strip=True)):
+                return node
+
+    # Strategy 3: nearby text search
+    for node in soup.find_all(["span", "div", "td", "li"]):
+        text = node.get_text(" ", strip=True).lower()
+        if "bid" in text and any(ch.isdigit() for ch in text):
+            return node
+
+    # Strategy 4: any visible node with a price-like string
+    for node in soup.find_all(["span", "div", "td"]):
+        text = node.get_text(" ", strip=True)
+        if extract_first_price(text) is not None:
+            return node
+
+    return None
+
 
 def get_prices_from_kitco():
     prices = {}
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5'
-    }
-    
-    metals = {
-        'platinum': 'https://www.kitco.com/charts/platinum',
-        'palladium': 'https://www.kitco.com/charts/palladium',
-        'rhodium': 'https://www.kitco.com/charts/rhodium'
-    }
 
-    for metal, url in metals.items():
+    for metal, url in METALS.items():
         try:
             print(f"Fetching {metal} from {url}...")
-            response = requests.get(url, headers=headers, timeout=20)
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # روش اول: تلاش برای پیدا کردن از روی شناسه (ID) سنتی
-                bid_element = soup.find(id=f"{metal}-bid") or soup.find(id=f"{metal}_bid")
-                
-                # روش دوم: جستجو در کلاس‌های قیمت لحظه‌ای
-                if not bid_element:
-                    bid_element = soup.find(class_=lambda x: x and all(k in x.lower() for k in ['price', 'bid']))
-                
-                # روش سوم: جستجو بر اساس ساختار متنی درون صفحه
-                if not bid_element:
-                    for td in soup.find_all(['td', 'span', 'div']):
-                        if td.text and 'bid' in td.text.lower() and len(td.text) < 50:
-                            sibling = td.find_next()
-                            if sibling and any(char.isdigit() for char in sibling.text):
-                                bid_element = sibling
-                                break
+            response = requests.get(url, headers=HEADERS, timeout=20)
 
-                if bid_element:
-                    raw_text = bid_element.text.strip()
-                    price_val = clean_price(raw_text)
-                    if price_val:
-                        prices[metal] = price_val
-                        print(f"Successfully found {metal}: {price_val} (Raw text: {raw_text})")
-                    else:
-                        print(f"Could not parse price value for {metal} from text: {raw_text}")
-                else:
-                    print(f"Could not find HTML element for {metal}")
-            else:
-                print(f"Failed to load page for {metal}. Status code: {response.status_code}")
+            if response.status_code != 200:
+                print(f"Failed to load {metal}. Status code: {response.status_code}")
+                continue
+
+            soup = BeautifulSoup(response.text, "html.parser")
+            price_node = find_price_element(soup, metal)
+
+            if not price_node:
+                print(f"Could not find HTML element for {metal}")
+                continue
+
+            raw_text = price_node.get_text(" ", strip=True)
+            price_val = extract_first_price(raw_text)
+
+            if price_val is None:
+                print(f"Could not parse price for {metal} from text: {raw_text}")
+                continue
+
+            prices[metal] = price_val
+            print(f"Successfully found {metal}: {price_val} (Raw text: {raw_text})")
+
         except Exception as e:
             print(f"Exception occurred while fetching {metal}: {e}")
 
     return prices
 
+
 def send_to_wordpress(prices):
     payload = {
         "prices": prices,
-        "security_key": "YOUR_SECRET_TOKEN" 
+        "security_key": WORDPRESS_SECURITY_KEY,
+        "source": "kitco",
     }
-    
+
     try:
         print(f"Sending data to WordPress: {prices}")
         response = requests.post(WORDPRESS_API_URL, json=payload, timeout=20)
+
         print(f"WordPress Response Code: {response.status_code}")
         print(f"WordPress Response Text: {response.text}")
-        if response.status_code == 200:
-            return True
-        return False
+
+        return response.status_code == 200
+
     except Exception as e:
         print(f"Error sending data to WordPress: {e}")
         return False
 
-if __name__ == "__main__":
+
+def main():
     print("Starting price extraction process...")
+
     extracted_prices = get_prices_from_kitco()
-    
     print(f"Final extracted prices: {extracted_prices}")
-    
-    if extracted_prices:
-        success = send_to_wordpress(extracted_prices)
-        if not success:
-            sys.exit(1)
-    else:
+
+    if not extracted_prices:
         print("Error: No price data could be extracted from any source.")
         sys.exit(1)
+
+    success = send_to_wordpress(extracted_prices)
+    if not success:
+        sys.exit(1)
+
+    print("Done.")
+
+
+if __name__ == "__main__":
+    main()
