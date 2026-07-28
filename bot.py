@@ -1,114 +1,104 @@
 import requests
 from bs4 import BeautifulSoup
-import json
 import sys
 
-# آدرس وب‌سایت وردپرسی شما برای ارسال قیمت‌ها
 WORDPRESS_API_URL = "https://emdadkhodro-tak.com/wp-json/smart-ppm/v1/update-prices"
 
+def clean_price(price_str):
+    """پاکسازی متن قیمت و تبدیل آن به عدد اعشاری"""
+    if not price_str:
+        return None
+    try:
+        # حذف کاما، علامت دلار و فضاهای خالی
+        clean_str = price_str.replace(',', '').replace('$', '').strip()
+        return float(clean_str)
+    except ValueError:
+        return None
+
 def get_prices_from_kitco():
-    """
-    استخراج قیمت‌ها از صفحات رسمی کیتکو
-    """
     prices = {}
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5'
     }
     
-    # ۱. استخراج قیمت پلاتین و پالادیوم
-    try:
-        url_pt_pd = "https://www.kitco.com/charts/platinum"
-        response = requests.get(url_pt_pd, headers=headers, timeout=15)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            # پیدا کردن قیمت‌ها بر اساس ساختار تگ‌های کیتکو
-            # (در صورت تغییر ساختار سایت، این بخش‌ها نیاز به آپدیت دارند)
-            # به عنوان نمونه تگ‌های قیمت لحظه‌ای:
-            platinum_bid = soup.find(id="platinum-bid")
-            palladium_bid = soup.find(id="palladium-bid")
-            
-            if platinum_bid:
-                prices['platinum'] = float(platinum_bid.text.replace(',', '').strip())
-            if palladium_bid:
-                prices['palladium'] = float(palladium_bid.text.replace(',', '').strip())
-    except Exception as e:
-        print(f"Error fetching Platinum/Palladium: {e}")
+    # لیست فلزات و صفحات متناظر در کیتکو
+    metals = {
+        'platinum': 'https://www.kitco.com/charts/platinum',
+        'palladium': 'https://www.kitco.com/charts/palladium',
+        'rhodium': 'https://www.kitco.com/charts/rhodium'
+    }
 
-    # ۲. استخراج قیمت رودیوم (از صفحه مرجع رودیوم کیتکو)
-    try:
-        url_rh = "https://www.kitco.com/charts/rhodium"
-        response = requests.get(url_rh, headers=headers, timeout=15)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            rhodium_bid = soup.find(id="rhodium-bid")
-            if rhodium_bid:
-                prices['rhodium'] = float(rhodium_bid.text.replace(',', '').strip())
-    except Exception as e:
-        print(f"Error fetching Rhodium: {e}")
+    for metal, url in metals.items():
+        try:
+            print(f"Fetching {metal} from {url}...")
+            response = requests.get(url, headers=headers, timeout=20)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # روش اول: تلاش برای پیدا کردن از روی شناسه (ID) سنتی
+                bid_element = soup.find(id=f"{metal}-bid") or soup.find(id=f"{metal}_bid")
+                
+                # روش دوم: در صورت تغییر ID، جستجو در تگ‌های جدول یا کلاس‌های قیمت لحظه‌ای (جدید)
+                if not bid_element:
+                    # به دنبال کلاس‌هایی که حاوی قیمت‌های Bid یا لایو هستند می‌گردد
+                    bid_element = soup.find(class_=lambda x: x and all(k in x.lower() for k in ['price', 'bid']))
+                
+                # روش سوم: جستجو بر اساس ساختار متنی درون صفحه
+                if not bid_element:
+                    for td in soup.find_all(['td', 'span', 'div']):
+                        if td.text and 'bid' in td.text.lower() and len(td.text) < 50:
+                            # بررسی تگ بعدی که معمولاً حاوی مقدار عددی قیمت است
+                            sibling = td.find_next()
+                            if sibling and any(char.isdigit() for char in sibling.text):
+                                bid_element = sibling
+                                break
+
+                if bid_element:
+                    price_val = clean_price(bid_element.text)
+                    if price_val:
+                        prices[metal] = price_val
+                        print(f"Successfully found {metal}: {price_val}")
+                    else:
+                        print(f"Could not parse price value for {metal} from text: {bid_element.text}")
+                else:
+                    print(f"Could not find HTML element for {metal}")
+            else:
+                print(f"Failed to load page for {metal}. Status code: {response.status_code}")
+        except Exception as e:
+            print(f"Exception occurred while fetching {metal}: {e}")
 
     return prices
 
-def get_prices_backup():
-    """
-    منبع پشتیبان (مثلاً استفاده از یک API رایگان یا منبع جایگزین در صورت بروز خطا در کیتکو)
-    """
-    # در صورتی که کیتکو تغییر ساختار داد، این بخش به عنوان پشتیبان عمل می‌کند
-    try:
-        # برای مثال استفاده از یک API عمومی جایگزین برای پلاتین و پالادیوم
-        response = requests.get("https://api.metals.dev/v1/latest?api_key=FREE_KEY", timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            return {
-                "platinum": data['rates'].get('platinum'),
-                "palladium": data['rates'].get('palladium'),
-                # رودیوم معمولاً در APIهای رایگان نیست و باید از کیتکو اسکرپ شود
-            }
-    except:
-        pass
-    return {}
-
 def send_to_wordpress(prices):
-    """
-    ارسال داده‌های نهایی به Endpoint سایت وردپرسی شما
-    """
     payload = {
         "prices": prices,
-        "security_key": "YOUR_SECRET_TOKEN" # برای امنیت بیشتر و جلوگیری از درخواست‌های فیک
+        "security_key": "YOUR_SECRET_TOKEN" 
     }
     
     try:
+        print(f"Sending data to WordPress: {prices}")
         response = requests.post(WORDPRESS_API_URL, json=payload, timeout=20)
         print(f"WordPress Response Code: {response.status_code}")
         print(f"WordPress Response Text: {response.text}")
         if response.status_code == 200:
-            print("Prices successfully synced to WordPress database!")
             return True
-        else:
-            print("Failed to sync with WordPress.")
-            return False
+        return False
     except Exception as e:
         print(f"Error sending data to WordPress: {e}")
         return False
 
 if __name__ == "__main__":
-    print("Starting price extraction...")
+    print("Starting price extraction process...")
     extracted_prices = get_prices_from_kitco()
     
-    # اگر برخی قیمت‌ها خالی بودند، از متد پشتیبان استفاده کن
-    if not extracted_prices.get('platinum') or not extracted_prices.get('rhodium'):
-        print("Using backup source for missing values...")
-        backup = get_prices_backup()
-        for metal, val in backup.items():
-            if val and not extracted_prices.get(metal):
-                extracted_prices[metal] = val
-
     print(f"Final extracted prices: {extracted_prices}")
     
-    # ارسال به سایت اگر حداقل یکی از قیمت‌ها موجود بود
     if extracted_prices:
         success = send_to_wordpress(extracted_prices)
         if not success:
             sys.exit(1)
     else:
-        print("No price data extracted. Exiting.")
+        print("Error: No price data could be extracted from any source.")
         sys.exit(1)
