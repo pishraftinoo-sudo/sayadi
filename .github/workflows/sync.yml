@@ -2,20 +2,24 @@ name: Auto Price Sync
 
 on:
   schedule:
-    - cron: '0 * * * *' # اجرای خودکار سر هر ساعت
-  workflow_dispatch: # امکان اجرای دستی از پنل گیت‌هاب
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4 # گیت‌هاب نسخه v4 را برای Node 24 بهینه‌سازی کرده است
+        # ارتقا به نسخه 4.2.2 یا بالاتر که با Node 24 سازگار است
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5 # استفاده از نسخه پایدار پایتون
+        # استفاده از نسخه v5.3.0 یا بالاتر
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11' # استفاده از نسخه جدیدتر پایتون برای پایداری بیشتر
 
       - name: Install Dependencies
         run: |
