@@ -23,8 +23,9 @@ jobs:
 
       - name: Run script
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # گیت‌هاب خودش این را هندل می‌کند
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPO: ${{ github.repository }}
+          TARGET_JSON_PATH: "prices.json"  # نام جدید و ایمن
           SYNC_URL: "https://www.sayadicatalyst.com/smart-sync.php"
           SYNC_KEY: "sayadi-smart-ppm-2026"
         run: python bot.py
