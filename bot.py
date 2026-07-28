@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import re
@@ -26,6 +27,11 @@ HEADERS = {
 }
 
 OUTPUT_FILE = os.getenv("OUTPUT_FILE", "prices.json").strip()
+
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "").strip()
+GITHUB_REPO = os.getenv("GITHUB_REPO", "").strip()   # example: username/repo
+GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", "main").strip()
+GITHUB_PATH = os.getenv("GITHUB_PATH", "prices.json").strip()
 
 
 def extract_first_price(text):
@@ -130,13 +136,15 @@ def get_prices_from_kitco():
     return prices
 
 
-def write_json_file(prices):
-    payload = {
+def build_payload(prices):
+    return {
         "source": "kitco",
         "updated_at": datetime.now(timezone.utc).isoformat(),
         "prices": prices,
     }
 
+
+def write_local_json(payload):
     output_dir = os.path.dirname(OUTPUT_FILE)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
@@ -145,6 +153,45 @@ def write_json_file(prices):
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
     print(f"Saved JSON to {OUTPUT_FILE}")
+
+
+def upload_json_to_github(payload):
+    if not GITHUB_TOKEN or not GITHUB_REPO:
+        print("GitHub upload skipped: GITHUB_TOKEN or GITHUB_REPO is not set.")
+        return False
+
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_PATH}"
+
+    headers = {
+        "Authorization": f"Bearer {GITHUB_TOKEN}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        **HEADERS,
+    }
+
+    content_text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    content_b64 = base64.b64encode(content_text.encode("utf-8")).decode("utf-8")
+
+    get_resp = requests.get(api_url, headers=headers, params={"ref": GITHUB_BRANCH}, timeout=30)
+
+    sha = None
+    if get_resp.status_code == 200:
+        sha = get_resp.json().get("sha")
+
+    data = {
+        "message": "Update prices.json",
+        "content": content_b64,
+        "branch": GITHUB_BRANCH,
+    }
+    if sha:
+        data["sha"] = sha
+
+    put_resp = requests.put(api_url, headers=headers, json=data, timeout=30)
+    if put_resp.status_code not in (200, 201):
+        raise RuntimeError(f"GitHub upload failed: {put_resp.status_code} {put_resp.text}")
+
+    print(f"Uploaded JSON to GitHub repo {GITHUB_REPO} at {GITHUB_PATH}")
+    return True
 
 
 def main():
@@ -157,7 +204,15 @@ def main():
         print("Error: No price data could be extracted.")
         sys.exit(1)
 
-    write_json_file(prices)
+    payload = build_payload(prices)
+    write_local_json(payload)
+
+    try:
+        upload_json_to_github(payload)
+    except Exception as exc:
+        print(f"GitHub upload failed: {exc}")
+        sys.exit(1)
+
     print("Done.")
 
 
