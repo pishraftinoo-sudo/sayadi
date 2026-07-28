@@ -1,18 +1,27 @@
 import requests
 from bs4 import BeautifulSoup
 import sys
+import re
 
 WORDPRESS_API_URL = "https://emdadkhodro-tak.com/wp-json/smart-ppm/v1/update-prices"
 
 def clean_price(price_str):
-    """پاکسازی متن قیمت و تبدیل آن به عدد اعشاری"""
+    """پاکسازی متن و استخراج اولین عدد اعشاری معتبر به عنوان قیمت"""
     if not price_str:
         return None
     try:
-        # حذف کاما، علامت دلار و فضاهای خالی
-        clean_str = price_str.replace(',', '').replace('$', '').strip()
-        return float(clean_str)
-    except ValueError:
+        # حذف فاصله‌های خالی ابتدا و انتها
+        text = price_str.strip()
+        
+        # با استفاده از Regex اولین عدد (که می‌تواند شامل کاما و ممیز باشد) را جدا می‌کنیم
+        # این الگو اعدادی مثل 1,601.00 یا 7,925.00 را از ابتدای متن استخراج می‌کند
+        match = re.search(r'^([\d,]+\.?\d*)', text)
+        if match:
+            clean_str = match.group(1).replace(',', '')
+            return float(clean_str)
+        return None
+    except Exception as e:
+        print(f"Error parsing regex on text '{price_str}': {e}")
         return None
 
 def get_prices_from_kitco():
@@ -23,7 +32,6 @@ def get_prices_from_kitco():
         'Accept-Language': 'en-US,en;q=0.5'
     }
     
-    # لیست فلزات و صفحات متناظر در کیتکو
     metals = {
         'platinum': 'https://www.kitco.com/charts/platinum',
         'palladium': 'https://www.kitco.com/charts/palladium',
@@ -40,28 +48,27 @@ def get_prices_from_kitco():
                 # روش اول: تلاش برای پیدا کردن از روی شناسه (ID) سنتی
                 bid_element = soup.find(id=f"{metal}-bid") or soup.find(id=f"{metal}_bid")
                 
-                # روش دوم: در صورت تغییر ID، جستجو در تگ‌های جدول یا کلاس‌های قیمت لحظه‌ای (جدید)
+                # روش دوم: جستجو در کلاس‌های قیمت لحظه‌ای
                 if not bid_element:
-                    # به دنبال کلاس‌هایی که حاوی قیمت‌های Bid یا لایو هستند می‌گردد
                     bid_element = soup.find(class_=lambda x: x and all(k in x.lower() for k in ['price', 'bid']))
                 
                 # روش سوم: جستجو بر اساس ساختار متنی درون صفحه
                 if not bid_element:
                     for td in soup.find_all(['td', 'span', 'div']):
                         if td.text and 'bid' in td.text.lower() and len(td.text) < 50:
-                            # بررسی تگ بعدی که معمولاً حاوی مقدار عددی قیمت است
                             sibling = td.find_next()
                             if sibling and any(char.isdigit() for char in sibling.text):
                                 bid_element = sibling
                                 break
 
                 if bid_element:
-                    price_val = clean_price(bid_element.text)
+                    raw_text = bid_element.text.strip()
+                    price_val = clean_price(raw_text)
                     if price_val:
                         prices[metal] = price_val
-                        print(f"Successfully found {metal}: {price_val}")
+                        print(f"Successfully found {metal}: {price_val} (Raw text: {raw_text})")
                     else:
-                        print(f"Could not parse price value for {metal} from text: {bid_element.text}")
+                        print(f"Could not parse price value for {metal} from text: {raw_text}")
                 else:
                     print(f"Could not find HTML element for {metal}")
             else:
