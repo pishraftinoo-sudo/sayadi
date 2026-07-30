@@ -157,7 +157,7 @@ def write_local_json(payload):
 
 def upload_json_to_github(payload):
     # پاک‌سازی اسلش احتمالی از ابتدای مسیر
-    TARGET_JSON_PATH = os.getenv("TARGET_JSON_PATH", "prices.json").strip()
+    path_clean = TARGET_JSON_PATH = os.getenv("TARGET_JSON_PATH", "prices.json").strip()
     
     if not GITHUB_TOKEN or not GITHUB_REPO:
         print("GitHub upload skipped: GITHUB_TOKEN or GITHUB_REPO is not set.")
