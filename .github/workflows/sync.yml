@@ -23,6 +23,4 @@ jobs:
           pip install requests beautifulsoup4
 
       - name: Run Script
-        env:
-        GITHUB_BRANCH: "main"
         run: python bot.py
