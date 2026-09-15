@@ -1,9 +1,9 @@
 {
   "source": "kitco",
-  "updated_at": "2026-09-14T21:15:54.892034+00:00",
+  "updated_at": "2026-09-15T00:08:00.778333+00:00",
   "prices": {
-    "platinum": 1759.0,
-    "palladium": 1266.0,
+    "platinum": 1750.0,
+    "palladium": 1265.0,
     "rhodium": 9200.0
   }
 }
